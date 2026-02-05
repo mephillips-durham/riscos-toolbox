@@ -112,7 +112,7 @@ class AboutToBeShownEvent(ToolboxEvent):
         ("_scroll", Point),
         ("_behind", ctypes.c_int32),
         ("_window_flags", ctypes.c_uint32),
-        ("+parent_window_handle", ctypes.c_int32),
+        ("_parent_window_handle", ctypes.c_int32),
         ("_alignment_flags", ctypes.c_uint32)]
 
     def get_if(self, value, show_type):
