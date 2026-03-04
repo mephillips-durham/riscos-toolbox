@@ -5,6 +5,7 @@ from functools import wraps
 import ctypes
 import inspect
 import swi
+import time
 
 from ._consts import Wimp
 from ._types import BBox, Point
@@ -59,8 +60,9 @@ from ._types import BBox, Point
 # one sent). On a reply the callback function will be called with the message.
 # If the callback function doesn't return False, then no further processing will
 # take place on the message. If it DOES return False, it will be offered to the
-# handlers in the usual way. If no reply is received the callback will be called
-# with None. In either case, the callback will be removed from the list of callbacks.
+# handlers in the usual way. If no reply is received within an optional timeout
+# period the callback will be called with None. In either case, the callback will
+# be removed from the list of callbacks.
 
 
 class Event(object):
@@ -168,14 +170,14 @@ class UserMessage(Event, ctypes.Structure):
     # or None if no reply is recieved. The reply callback takes two parameters:
     # the message info and the message data. See the @reply_handler decorator.
     def broadcast(self, recorded=False, size=None,
-                  reply_callback=None):
+                  reply_callback=None, reply_timeout=0):
         """Sends the message as a broadcast."""
         self.your_ref = 0
-        self._send(recorded, None, None, size, reply_callback)
+        self._send(recorded, None, None, size, reply_callback, reply_timeout)
 
     def send(self, task=None, window=None, iconbar=None,
              recorded=False, size=None,
-             reply_callback=None):
+             reply_callback=None, reply_timeout=0):
         """Sends the message to a task, window or iconbar icon."""
         self.your_ref = 0
         if task:
@@ -187,13 +189,15 @@ class UserMessage(Event, ctypes.Structure):
         else:
             handle, icon = 0, 0  # Broadcast
 
-        return self._send(recorded, handle, icon, size, reply_callback)
+        return self._send(recorded, handle, icon, size, reply_callback,
+                          reply_timeout)
 
     def reply(self, reply, recorded=False, size=None,
-              reply_callback=None, reply_messages=None):
+              reply_callback=None, reply_timeout=0):
         """Reply to this message with the one given in reply"""
         reply.your_ref = self.my_ref
-        return reply._send(recorded, self.sender, None, size, reply_callback)
+        return reply._send(recorded, self.sender, None, size, reply_callback,
+                           reply_timeout)
 
     def acknowledge(self):
         self.your_ref = self.my_ref
@@ -202,7 +206,7 @@ class UserMessage(Event, ctypes.Structure):
                        ctypes.addressof(self),
                        self.sender, 0)
 
-    def _send(self, recorded, target, icon, size, reply_callback):
+    def _send(self, recorded, target, icon, size, reply_callback, reply_timeout):
         reason = Wimp.UserMessageRecorded if recorded else Wimp.UserMessage
         self.size = size or self.size or ctypes.sizeof(self)
         self.code = self.__class__.event_id
@@ -210,7 +214,12 @@ class UserMessage(Event, ctypes.Structure):
                          reason, ctypes.addressof(self),
                          target or 0, icon or 0)
         if reply_callback:
-            _reply_callbacks[self.my_ref] = reply_callback
+            if reply_timeout is not None:
+                reply_timeout += time.monotonic()
+            _reply_callbacks[self.my_ref] = {
+                'timeout': reply_timeout,
+                'function': reply_callback
+            }
 
         return handle if target != 0 else None
 
@@ -428,13 +437,13 @@ def toolbox_dispatch(event_code, application, id_block, poll_block):
 
 def message_dispatch(code, application, id_block, poll_block):
     if code.your_ref in _reply_callbacks:
-        r = _reply_callbacks[code.your_ref]((code, poll_block))
+        r = _reply_callbacks[code.your_ref]['function']((code, poll_block))
         del _reply_callbacks[code.your_ref]
         if r is not False:
             return
 
     if code.reason == Wimp.UserMessageAcknowledge and code.my_ref in _reply_callbacks:
-        r = _reply_callbacks[code.my_ref]((code, poll_block))
+        r = _reply_callbacks[code.my_ref]['function']((code, poll_block))
         del _reply_callbacks[code.my_ref]
         if r is not False:
             return
@@ -456,8 +465,10 @@ def null_polls():
 
 def null_poll():
     for ref in list(_reply_callbacks.keys()):
-        _reply_callbacks[ref](None)
-        del _reply_callbacks[ref]
+        if _reply_callbacks[ref]['timeout']:
+            if _reply_callbacks[ref]['timeout'] < time.monotonic():
+                _reply_callbacks[ref]['function'](None)
+                del _reply_callbacks[ref]
 
 
 def registered_wimp_events():
