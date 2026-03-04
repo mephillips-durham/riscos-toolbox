@@ -171,8 +171,7 @@ class UserMessage(Event, ctypes.Structure):
                   reply_callback=None):
         """Sends the message as a broadcast."""
         self.your_ref = 0
-        self._send(Wimp.UserMessageRecorded if recorded else Wimp.UserMessage,
-                   None, None, size, reply_callback)
+        self._send(recorded, None, None, size, reply_callback)
 
     def send(self, task=None, window=None, iconbar=None,
              recorded=False, size=None,
@@ -188,15 +187,13 @@ class UserMessage(Event, ctypes.Structure):
         else:
             handle, icon = 0, 0  # Broadcast
 
-        return self._send(Wimp.UserMessageRecorded if recorded else Wimp.UserMessage,
-                   handle, icon, size, reply_callback)
+        return self._send(recorded, handle, icon, size, reply_callback)
 
     def reply(self, reply, recorded=False, size=None,
               reply_callback=None, reply_messages=None):
         """Reply to this message with the one given in reply"""
         reply.your_ref = self.my_ref
-        return reply._send(Wimp.UserMessageRecorded if recorded else Wimp.UserMessage,
-                    self.sender, None, size, reply_callback)
+        return reply._send(recorded, self.sender, None, size, reply_callback)
 
     def acknowledge(self):
         self.your_ref = self.my_ref
@@ -205,7 +202,8 @@ class UserMessage(Event, ctypes.Structure):
                        ctypes.addressof(self),
                        self.sender, 0)
 
-    def _send(self, reason, target, icon, size, reply_callback):
+    def _send(self, recorded, target, icon, size, reply_callback):
+        reason = Wimp.UserMessageRecorded if recorded else Wimp.UserMessage
         self.size = size or self.size or ctypes.sizeof(self)
         self.code = self.__class__.event_id
         handle = swi.swi('Wimp_SendMessage', 'IIii;..i',
