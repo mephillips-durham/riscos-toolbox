@@ -256,16 +256,40 @@ class EventHandler(object):
         self.wimp_handlers = {}
         self.message_handlers = {}
 
+        def _toolbox_subclasses(cls=EventHandler, add=False):
+            # Returns all subclasses of Application and Object which we can
+            # expect to have handlers associated with toolbox objects.
+            include = ['Application', 'Object']
+            subclasses = []
+            for subclass in cls.__subclasses__():
+                name = subclass.__name__
+                wanted = name in include or add
+                if wanted:
+                    subclasses.append(name)
+                subclasses.extend(_toolbox_subclasses(subclass, wanted))
+            return subclasses
+
+        def _gather_event_handlers(event, handlers, items):
+            for component, handler in items:
+                if event not in handlers:
+                    handlers[event] = {component: [handler]}
+                elif component not in handlers[event]:
+                    handlers[event][component] = [handler]
+                else:
+                    handlers[event][component].append(handler)
+
         def _build_handlers(registry, handlers, classname):
             for event, handler_map in registry.items():
                 if classname in handler_map:
-                    for component, handler in handler_map[classname].items():
-                        if event not in handlers:
-                            handlers[event] = {component: [handler]}
-                        elif component not in handlers[event]:
-                            handlers[event][component] = [handler]
-                        else:
-                            handlers[event][component].append(handler)
+                    _gather_event_handlers(event, handlers,
+                                           handler_map[classname].items())
+
+                if classname == 'Application':
+                    objects = _toolbox_subclasses()
+                    for cname in handler_map:
+                        if cname not in objects:
+                            _gather_event_handlers(event, handlers,
+                                                   handler_map[cname].items())
 
         for klass in inspect.getmro(self.__class__):
             classname = klass.__qualname__
